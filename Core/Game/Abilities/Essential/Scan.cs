@@ -1,10 +1,9 @@
 ﻿using System;
 using UnityEngine;
-using Lockstep.Data;
 
 namespace Lockstep
 {
-	[UnityEngine.DisallowMultipleComponent]
+	[DisallowMultipleComponent]
 	public class Scan : ActiveAbility
 	{
 		private const int SearchRate = (int)(LockstepManager.FrameRate / 2);
@@ -15,29 +14,6 @@ namespace Lockstep
 		protected bool CanTurn { get; private set; }
 
 		public LSAgent Target { get; private set; }
-
-
-		public bool HasTarget
-		{
-			get { return _hasTarget; }
-			set
-			{
-				if (_hasTarget != value)
-				{
-					_hasTarget = value;
-					if (CanMove)
-					{
-						if (_hasTarget)
-						{
-							cachedMove.CanCollisionStop = false;
-						}
-						else {
-							cachedMove.CanCollisionStop = true;
-						}
-					}
-				}
-			}
-		}
 
 		public virtual string ProjCode { get { return _projectileCode; } }
 
@@ -93,6 +69,7 @@ namespace Lockstep
 				return cachedProjectileOffsets;
 			}
 		}
+
 		public bool CycleProjectiles { get { return this._cycleProjectiles; } }
 		//Offset of projectile
 
@@ -115,7 +92,7 @@ namespace Lockstep
 		protected bool _trackAttackAngle = true;
 		[FixedNumberAngle, SerializeField]
 		protected long _attackAngle = FixedMath.TenDegrees;
-		[SerializeField]
+		[SerializeField, Tooltip("Important: With Vector3d, the Z axis represents height!")]
 		protected Vector3d _projectileOffset;
 		[SerializeField]
 		protected Vector3d[] _secondaryProjectileOffsets;
@@ -149,8 +126,9 @@ namespace Lockstep
 		private uint targetVersion;
 		private int searchCount;
 		private long attackCount;
-		private bool _hasTarget;
-		private bool isAttackMoving;
+
+		public bool IsAttackMoving { get; private set; }
+
 		private bool isFocused;
 
 		protected override void OnSetup()
@@ -158,7 +136,7 @@ namespace Lockstep
 			cachedTurn = Agent.GetAbility<Turn>();
 			cachedMove = Agent.GetAbility<Move>();
 			if (Sight < Range)
-				_sight = Range + FixedMath.One * 5;
+				_sight = Range + FixedMath.One * 10;
 
 			//fastRange = (Range * Range);
 			basePriority = cachedBody.Priority;
@@ -170,51 +148,74 @@ namespace Lockstep
 			}
 
 			CanTurn = cachedTurn.IsNotNull();
-			CachedOnHit = OnHit;
 			CachedAgentValid = this.AgentValid;
 		}
 
 		private void HandleOnArrive()
 		{
-			if (this.isAttackMoving)
+			if (this.IsAttackMoving)
 			{
-				if (this.HasTarget == false)
-					isAttackMoving = false;
+				IsAttackMoving = false;
 			}
 		}
 
 		#region variables for quick fix for repathing to target's new position
+
 		const long repathDistance = FixedMath.One * 2;
 		FrameTimer repathTimer = new FrameTimer();
 		const int repathInterval = LockstepManager.FrameRate * 2;
 		int repathRandom;
+
 		#endregion
+
 		protected override void OnInitialize()
 		{
 			basePriority = Agent.Body.Priority;
 			searchCount = LSUtility.GetRandom(SearchRate) + 1;
 			attackCount = 0;
-			HasTarget = false;
 			Target = null;
-			isAttackMoving = false;
+			IsAttackMoving = false;
 			inRange = false;
 			isFocused = false;
 			CycleCount = 0;
 			this.Destination = Vector2d.zero;
-			repathTimer.Reset (repathInterval);
-			repathRandom = LSUtility.GetRandom (repathInterval);
+			repathTimer.Reset(repathInterval);
+			repathRandom = LSUtility.GetRandom(repathInterval);
+
+			//caching parameters
+			var spawnVersion = Agent.SpawnVersion;
+			var controller = Agent.Controller;
+			CachedOnHit = (target) => OnHit(target, spawnVersion, controller);
 		}
 
 		protected override void OnSimulate()
 		{
-
-			attackCount -= FixedMath.One / LockstepManager.FrameRate;
-			if (HasTarget)
+			if (attackCount > AttackInterval)
+			{
+				//reset attackCount overcharge if left idle
+				attackCount = AttackInterval;
+			}
+			else if (attackCount < AttackInterval)
+			{
+				//charge up attack
+				attackCount += LockstepManager.DeltaTime;
+			}
+			if (Target != null)
 			{
 				BehaveWithTarget();
 			}
-			else {
+			else
+			{
 				BehaveWithNoTarget();
+			}
+
+
+			if (CanMove)
+			{
+				if (IsAttackMoving)
+				{
+					cachedMove.StartLookingForStopPause();
+				}
 			}
 		}
 
@@ -225,7 +226,7 @@ namespace Lockstep
 
 		void StartWindup()
 		{
-			windupCount = this.Windup;
+			windupCount = 0;
 			IsWindingUp = true;
 			Agent.ApplyImpulse(this.FireAnimImpulse);
 			OnStartWindup();
@@ -246,55 +247,47 @@ namespace Lockstep
 			get { return AnimImpulse.Fire; }
 		}
 
+		bool CheckRange()
+		{
+			Vector2d targetDirection = Target.Body._position - cachedBody._position;
+			long fastMag = targetDirection.FastMagnitude();
+
+			return fastMag <= fastRangeToTarget;
+		}
+
 		void BehaveWithTarget()
 		{
 			if (Target.IsActive == false || Target.SpawnVersion != targetVersion ||
 				(this.TargetAllegiance & Agent.GetAllegiance(Target)) == 0)
 			{
+				//Target's lifecycle has ended
 				StopEngage();
 				BehaveWithNoTarget();
 				return;
 			}
-			if (IsWindingUp)
-			{
-                windupCount -= FixedMath.One / LockstepManager.FrameRate;
-				if (windupCount < 0)
-				{
-					if (this.AgentConditional(Target))
-					{
-						Fire();
-						while (this.attackCount < 0)
-							this.attackCount += (this.AttackInterval);
-						this.attackCount -= Windup;
-					}
-					else {
-						StopEngage();
-						this.ScanAndEngage();
-					}
-                    IsWindingUp = false;
 
-                }
-            }
-			else {
+			if (!IsWindingUp)
+			{
 				Vector2d targetDirection = Target.Body._position - cachedBody._position;
 				long fastMag = targetDirection.FastMagnitude();
 
-				if (fastMag <= fastRangeToTarget)
+				//TODO: Optimize this instead of recalculating magnitude multiple times
+				if (CheckRange())
 				{
 					if (!inRange)
 					{
 						if (CanMove)
 							cachedMove.StopMove();
-
+						inRange = true;
 					}
 					Agent.SetState(EngagingAnimState);
 
 					long mag;
 					targetDirection.Normalize(out mag);
 					bool withinTurn = TrackAttackAngle == false ||
-													 (fastMag != 0 &&
-													 cachedBody.Forward.Dot(targetDirection.x, targetDirection.y) > 0
-													 && cachedBody.Forward.Cross(targetDirection.x, targetDirection.y).Abs() <= AttackAngle);
+									  (fastMag != 0 &&
+									  cachedBody.Forward.Dot(targetDirection.x, targetDirection.y) > 0
+									  && cachedBody.Forward.Cross(targetDirection.x, targetDirection.y).Abs() <= AttackAngle);
 					bool needTurn = mag != 0 && !withinTurn;
 					if (needTurn)
 					{
@@ -302,47 +295,50 @@ namespace Lockstep
 						{
 							cachedTurn.StartTurnDirection(targetDirection);
 						}
-						else {
-
-						}
 					}
-					else {
-						if (attackCount <= 0)
+					else
+					{
+						if (attackCount >= AttackInterval)
 						{
 							StartWindup();
 						}
 					}
 
-					if (inRange == false)
-					{
-						inRange = true;
-					}
 				}
-				else {
+				else
+				{
 					if (CanMove)
 					{
+						cachedMove.PauseAutoStop();
+						cachedMove.PauseCollisionStop();
 						if (cachedMove.IsMoving == false)
 						{
 							cachedMove.StartMove(Target.Body._position);
 							cachedBody.Priority = basePriority;
 						}
-						else {
-							if (inRange) {
+						else
+						{
+							if (inRange)
+							{
 								cachedMove.Destination = Target.Body.Position;
-							} else {
-								if (repathTimer.AdvanceFrame ()) {
+							}
+							else
+							{
+								if (repathTimer.AdvanceFrame())
+								{
 									if (Target.Body.PositionChangedBuffer &&
-									   Target.Body.Position.FastDistance (cachedMove.Destination.x, cachedMove.Destination.y) >= (repathDistance * repathDistance)) {
-										cachedMove.StartMove (Target.Body._position);
+										Target.Body.Position.FastDistance(cachedMove.Destination.x, cachedMove.Destination.y) >= (repathDistance * repathDistance))
+									{
+										cachedMove.StartMove(Target.Body._position);
 										//So units don't sync up and path on the same frame
-										repathTimer.AdvanceFrames (repathRandom);
+										repathTimer.AdvanceFrames(repathRandom);
 									}
 								}
 							}
 						}
 					}
 
-					if (isAttackMoving || isFocused == false)
+					if (IsAttackMoving || isFocused == false)
 					{
 						searchCount -= 1;
 						if (searchCount <= 0)
@@ -351,7 +347,8 @@ namespace Lockstep
 							if (ScanAndEngage())
 							{
 							}
-							else {
+							else
+							{
 							}
 						}
 					}
@@ -362,19 +359,52 @@ namespace Lockstep
 
 				}
 			}
+			if (IsWindingUp)
+			{
+				//TODO: Do we need AgentConditional checks here?
+				windupCount += LockstepManager.DeltaTime;
+				if (CanTurn)
+				{
+					Vector2d targetVector = Target.Body._position - cachedBody._position;
+					cachedTurn.StartTurnVector(targetVector);
+				}
+				if (windupCount >= Windup)
+				{
+					windupCount = 0;
+					Fire();
+					while (this.attackCount >= AttackInterval)
+					{
+						//resetting back down after attack is fired
+						this.attackCount -= (this.AttackInterval);
+					}
+					this.attackCount += Windup;
+					IsWindingUp = false;
+				}
+
+			}
+			else
+			{
+				windupCount = 0;
+			}
+			if (inRange)
+			{
+				cachedMove.PauseAutoStop();
+				cachedMove.PauseCollisionStop();
+			}
 		}
 
 		void BehaveWithNoTarget()
 		{
-			if (isAttackMoving || Agent.IsCasting == false)
+			if (IsAttackMoving || Agent.IsCasting == false)
 			{
-				if (isAttackMoving)
+				if (IsAttackMoving)
 				{
 					{
 						searchCount -= 8;
 					}
 				}
-				else {
+				else
+				{
 					searchCount -= 2;
 				}
 				if (searchCount <= 0)
@@ -387,18 +417,22 @@ namespace Lockstep
 			}
 		}
 
-		public event Action<LSAgent> ExtraOnHit;
-		protected void CallExtraOnHit(LSAgent agent)
+		public event Action<LSAgent, bool> ExtraOnHit;
+
+		protected void CallExtraOnHit(LSAgent agent, bool isCurrent)
 		{
 			if (ExtraOnHit != null)
-				ExtraOnHit(agent);
+				ExtraOnHit(agent, isCurrent);
 		}
-		protected virtual void OnHit(LSAgent agent)
+
+		protected virtual void OnHit(LSAgent target, uint agentVersion, AgentController controller)
 		{
-			Health healther = agent.GetAbility<Health>();
-			AttackerInfo info = new AttackerInfo(Agent, this.Agent.Controller);
+			//If the shooter died, certain effects or records can't be completed
+			bool isCurrent = Agent != null && agentVersion == Agent.SpawnVersion;
+			Health healther = target.GetAbility<Health>();
+			AttackerInfo info = new AttackerInfo(isCurrent ? Agent : null, controller);
 			healther.TakeDamage(Damage, info);
-			CallExtraOnHit(agent);
+			CallExtraOnHit(target, isCurrent);
 		}
 
 		private Action<LSAgent> CachedOnHit;
@@ -422,6 +456,7 @@ namespace Lockstep
 		/// <value>The current projectile.</value>
 
 		public int CycleCount { get; private set; }
+
 		protected virtual void OnFire(LSAgent target)
 		{
 			if (this.CycleProjectiles)
@@ -431,14 +466,15 @@ namespace Lockstep
 				{
 					CycleCount = 0;
 				}
-				FullFireProjectile(this.ProjCode,ProjectileOffsets[CycleCount], target);
+				FullFireProjectile(this.ProjCode, ProjectileOffsets[CycleCount], target);
 
 
 			}
-			else {
+			else
+			{
 				for (int i = 0; i < ProjectileOffsets.Length; i++)
 				{
-					FullFireProjectile(ProjCode,ProjectileOffsets[i], target);
+					FullFireProjectile(ProjCode, ProjectileOffsets[i], target);
 
 				}
 			}
@@ -451,20 +487,24 @@ namespace Lockstep
 			FireProjectile(proj);
 			return proj;
 		}
+
+		public static Scan LastFire;
+
 		public LSProjectile PrepareProjectile(string projectileCode, Vector3d projOffset, LSAgent target)
 		{
+			LastFire = this;
 			LSProjectile currentProjectile = ProjectileManager.Create(
-				projectileCode,
-				this.Agent,
-				projOffset,
-				this.TargetAllegiance,
-				(other) =>
-				{
-					Health healther = other.GetAbility<Health>();
-					return healther.IsNotNull() && healther.HealthAmount > 0;
+												 projectileCode,
+												 this.Agent,
+												 projOffset,
+												 this.TargetAllegiance,
+												 (other) =>
+												 {
+													 Health healther = other.GetAbility<Health>();
+													 return healther.IsNotNull() && healther.HealthAmount > 0;
 
-				},
-				CachedOnHit);
+												 },
+												 CachedOnHit);
 
 			switch (currentProjectile.TargetingBehavior)
 			{
@@ -472,12 +512,12 @@ namespace Lockstep
 					currentProjectile.InitializeHoming(target);
 					break;
 				case TargetingType.Timed:
-					currentProjectile.InitializeTimed(Agent.Body.Forward);
+					currentProjectile.InitializeTimed(target);
 					break;
 				case TargetingType.Positional:
 					currentProjectile.InitializePositional(target.Body.Position.ToVector3d(target.Body.HeightPos));
 					break;
-				case TargetingType.Free:
+				case TargetingType.Directional:
 					//TODO
 					throw new System.Exception("Not implemented yet.");
 					//break;
@@ -485,30 +525,31 @@ namespace Lockstep
 			OnPrepareProjectile(currentProjectile);
 			return currentProjectile;
 		}
+
 		public LSProjectile PrepareProjectile(string projectileCode, Vector3d projOffset, Vector3d targetPos)
 		{
 			LSProjectile currentProjectile = ProjectileManager.Create(
-				projectileCode,
-				this.Agent,
-				projOffset,
-				this.TargetAllegiance,
-				(other) =>
-				{
-					Health healther = other.GetAbility<Health>();
-					return healther.IsNotNull() && healther.HealthAmount > 0;
+												 projectileCode,
+												 this.Agent,
+												 projOffset,
+												 this.TargetAllegiance,
+												 (other) =>
+												 {
+													 Health healther = other.GetAbility<Health>();
+													 return healther.IsNotNull() && healther.HealthAmount > 0;
 
-				},
-				CachedOnHit);
+												 },
+												 CachedOnHit);
 
 			switch (currentProjectile.TargetingBehavior)
 			{
 				case TargetingType.Timed:
-					currentProjectile.InitializeTimed(Agent.Body.Forward);
+					currentProjectile.InitializeTimed(targetPos);
 					break;
 				case TargetingType.Positional:
 					currentProjectile.InitializePositional(targetPos);
 					break;
-				case TargetingType.Free:
+				case TargetingType.Directional:
 					//TODO
 					throw new System.Exception("Not implemented yet.");
 					//break;
@@ -516,10 +557,12 @@ namespace Lockstep
 
 			return currentProjectile;
 		}
+
 		protected virtual void OnPrepareProjectile(LSProjectile projectile)
 		{
 
 		}
+
 		public void FireProjectile(LSProjectile projectile)
 		{
 			ProjectileManager.Fire(projectile);
@@ -533,17 +576,21 @@ namespace Lockstep
 				if (cachedTargetHealth.IsNotNull())
 				{
 					OnEngage(other);
-
 					Target = other;
-
-					HasTarget = true;
 					targetVersion = Target.SpawnVersion;
 					IsCasting = true;
 					fastRangeToTarget = Range + (Target.Body.IsNotNull() ? Target.Body.Radius : 0) + Agent.Body.Radius;
 					fastRangeToTarget *= fastRangeToTarget;
+
+					if (!CheckRange())
+					{
+						if (CanMove)
+							cachedMove.StartMove(Target.Body.Position);
+					}
 				}
 			}
 		}
+
 		protected virtual void OnEngage(LSAgent target)
 		{
 
@@ -551,25 +598,30 @@ namespace Lockstep
 
 		public void StopEngage(bool complete = false)
 		{
+			inRange = false;
+			IsWindingUp = false;
 			isFocused = false;
 			if (complete)
 			{
-				isAttackMoving = false;
+				IsAttackMoving = false;
 			}
-			else {
-				if (isAttackMoving)
+			else
+			{
+				if (IsAttackMoving)
 				{
 					if (ScanAndEngage() == false)
 					{
 						cachedMove.StartMove(this.Destination);
 					}
-					else {
+					else
+					{
 					}
 				}
-				else {
+				else
+				{
 					if (CanMove)
 					{
-						if (HasTarget && inRange == false)
+						if (Target != null && inRange == false)
 						{
 							cachedMove.StopMove();
 						}
@@ -577,7 +629,6 @@ namespace Lockstep
 				}
 			}
 
-			HasTarget = false;
 			Target = null;
 			cachedBody.Priority = basePriority;
 
@@ -596,34 +647,36 @@ namespace Lockstep
 			//if formal (going through normal Execute routes), do the group stuff
 			if (isFormal)
 			{
-				if (HasTarget)
+				if (Target != null)
 				{
 					cachedMove.RegisterGroup(false);
 				}
-				else {
+				else
+				{
 					cachedMove.RegisterGroup();
 				}
 			}
-			else {
-				cachedMove.StartMove(position);
+			else
+			{
+				if (Target == null)
+					cachedMove.StartMove(position);
 			}
-			isAttackMoving = true;
+			IsAttackMoving = true;
 			isFocused = false;
 		}
+
 		protected override void OnExecute(Command com)
 		{
 			Vector2d pos;
 			DefaultData target;
 			if (com.TryGetData<Vector2d>(out pos) && CanMove)
 			{
-
 				StartAttackMove(pos);
-
 			}
 			else if (com.TryGetData<DefaultData>(out target) && target.Is(DataType.UShort))
 			{
 				isFocused = true;
-				isAttackMoving = false;
+				IsAttackMoving = false;
 				LSAgent tempTarget;
 				ushort targetValue = (ushort)target.Value;
 				if (AgentController.TryGetAgentInstance(targetValue, out tempTarget))
@@ -652,11 +705,12 @@ namespace Lockstep
 		private bool ScanAndEngage()
 		{
 			LSAgent agent = DoScan();
-			if (agent == null || HasTarget && agent == Target)
+			if (agent == null || agent == Target)
 			{
 				return false;
 			}
-			else {
+			else
+			{
 				Engage(agent);
 				return true;
 			}
@@ -667,8 +721,9 @@ namespace Lockstep
 			return true;
 		}
 
-		public Func<LSAgent, bool> CachedAgentValid { get; private set;}
+		public Func<LSAgent, bool> CachedAgentValid { get; private set; }
 
+		//TODO: Consolidate the checks in LSInfluencer
 		protected Func<LSAgent, bool> AgentConditional
 		{
 			get
@@ -683,7 +738,8 @@ namespace Lockstep
 						return Agent.GlobalID != other.GlobalID && health != null && health.CanLose && CachedAgentValid(other);
 					};
 				}
-				else {
+				else
+				{
 					agentConditional = (other) =>
 					{
 						Health health = other.GetAbility<Health>();
@@ -693,6 +749,7 @@ namespace Lockstep
 				return agentConditional;
 			}
 		}
+
 		protected virtual bool HardAgentConditional()
 		{
 			Health health = Target.GetAbility<Health>();
@@ -702,7 +759,8 @@ namespace Lockstep
 				{
 					return health.CanLose;
 				}
-				else {
+				else
+				{
 					Debug.Log("asdf");
 					return health.CanGain;
 				}
@@ -712,18 +770,17 @@ namespace Lockstep
 
 		protected virtual LSAgent DoScan()
 		{
-
 			Func<LSAgent, bool> agentConditional = AgentConditional;
-			LSAgent agent = InfluenceManager.Scan(
-										 this.cachedBody.Position,
-										 this.Sight,
-										 agentConditional,
-										 (bite) =>
-										 {
-											 return ((this.Agent.Controller.GetAllegiance(bite) & this.TargetAllegiance) != 0);
 
-										 }
-									 );
+			LSAgent agent = InfluenceManager.Scan(
+								this.cachedBody.Position,
+								this.Sight,
+								agentConditional,
+								(bite) =>
+								{
+									return ((this.Agent.Controller.GetAllegiance(bite) & this.TargetAllegiance) != 0);
+								}
+							);
 
 			return agent;
 		}
@@ -735,7 +792,8 @@ namespace Lockstep
 			{
 				return false;
 			}
-			else {
+			else
+			{
 				Engage(agent);
 				return true;
 			}
@@ -744,9 +802,10 @@ namespace Lockstep
 #if UNITY_EDITOR
 		void OnDrawGizmos()
 		{
-			if (Agent.IsActive == false) return;
+			if (Agent == null || Agent.IsActive == false)
+				return;
 			if (Agent.Body == null)
-				Debug.Log (Agent.gameObject);
+				Debug.Log(Agent.gameObject);
 			Gizmos.DrawWireSphere(Application.isPlaying ? Agent.Body._visualPosition : this.transform.position, this.Range.ToFloat());
 		}
 #endif

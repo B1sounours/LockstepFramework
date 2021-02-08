@@ -4,27 +4,33 @@
 // (See accompanying file LICENSE or copy at
 // http://opensource.org/licenses/MIT)
 //=======================================================================
-using UnityEngine;
-using System.Collections; using FastCollections;
-
 namespace Lockstep
 {
 	public class CollisionPair
 	{
 		public LSBody Body1;
 		public LSBody Body2;
-		private long CacheSqrDistance;
+		private long FastCollideDistance;
+		private long FastDistance;
 		private CollisionType LeCollisionType;
 		private bool DoPhysics = true;
 		public bool Active;
 		public uint PartitionVersion;
 
 		public ushort _Version = 1;
+		//If negative, prevent culling altogether
+		internal short CullCounter;
+		internal bool PreventDistanceCull;
+		internal int LastCollidedFrame;
+		private long FastDistanceOffset;
+
 		public bool _isColliding;
 
-		public bool IsColliding {
-			get {return _isColliding;}
-			set {
+		public bool IsColliding
+		{
+			get { return _isColliding; }
+			set
+			{
 				_isColliding = value;
 			}
 		}
@@ -43,6 +49,7 @@ namespace Lockstep
 
 		public void Initialize(LSBody b1, LSBody b2)
 		{
+
 			IsValid = true;
 			if (!IsValid)
 				return;
@@ -67,8 +74,8 @@ namespace Lockstep
 			PenetrationX = 0;
 			PenetrationY = 0;
 
-			CacheSqrDistance = b1.Radius + b2.Radius;
-			CacheSqrDistance *= CacheSqrDistance;
+			FastCollideDistance = b1.Radius + b2.Radius;
+			FastCollideDistance *= FastCollideDistance;
 
 			LeCollisionType = CollisionType.None;
 			if (Body1.Shape == ColliderType.None || Body2.Shape == ColliderType.None)
@@ -126,151 +133,105 @@ namespace Lockstep
 			{
 
 			}
+
+
+			//TODO: Space out checks when culled
+			//TODO: The time between collision checks might cause goofy behavior
+			//Maybe use a distance or velocity heuristic for culling instead of time since last collision
+			//It wouldn't be able to replace partitions because of raycasts and fast-moving objects
+			//Let's see if this works well or if something better is needed. 
+			if (Body1.PreventCulling || Body2.PreventCulling)
+			{
+				//Never cull
+				CullCounter = -1;
+			}
+			else
+			{
+				//Immediately check collision
+				CullCounter = 0;
+				//If collision distance is too large, don't cull based on distance
+				PreventDistanceCull = FastCollideDistance > PhysicsManager.CullFastDistanceMax;
+				LastCollidedFrame = LockstepManager.FrameCount;
+				FastDistanceOffset = FixedMath.Sqrt(FastCollideDistance >> FixedMath.SHIFT_AMOUNT) + FixedMath.One * 2;
+				FastDistanceOffset *= FastDistanceOffset;
+			}
 			Active = true;
 			_Version++;
 		}
 
 		public void Deactivate()
 		{
-			if (IsColliding) {
+			if (IsColliding)
+			{
 				Body1.NotifyContact(Body2, false, IsColliding);
 				Body2.NotifyContact(Body1, false, IsColliding);
 			}
 			Active = false;
+			if (_ranIndex >= 0)
+			{
+				PhysicsManager.RanCollisionPairs.RemoveAt(_ranIndex);
+				_ranIndex = -1;
+			}
 		}
 
 		static long dist, depth;
 
 		private void DistributeCollision()
 		{
-
-
-
 			if (!DoPhysics)
 				return;
 
-            switch (LeCollisionType)
-            {
-                case CollisionType.Circle_Circle:
-                    DistX = Body1._position.x - Body2._position.x;
-                    DistY = Body1._position.y - Body2._position.y;
-                    dist = FixedMath.Sqrt((DistX * DistX + DistY * DistY) >> FixedMath.SHIFT_AMOUNT);
+			switch (LeCollisionType)
+			{
+				case CollisionType.Circle_Circle:
+					DistX = Body1._position.x - Body2._position.x;
+					DistY = Body1._position.y - Body2._position.y;
+					dist = FixedMath.Sqrt((DistX * DistX + DistY * DistY) >> FixedMath.SHIFT_AMOUNT);
 
-                    if (dist == 0)
-                    {
+					if (dist == 0)
+					{
 						//If objects are on the same position, give them push in random direction
 						const long randomMax = FixedMath.One / 32;
 						Body1._position.x += LSUtility.GetRandomLong(randomMax) - randomMax / 2;
 						Body1._position.y += LSUtility.GetRandomLong(randomMax) - randomMax / 2;
-                        Body1.PositionChanged = true;
+						Body1.PositionChanged = true;
 						Body2._position.x += LSUtility.GetRandomLong(randomMax) - randomMax / 2;
 						Body2._position.y += LSUtility.GetRandomLong(randomMax) - randomMax / 2;
-                        Body2.PositionChanged = true;
-                        return;
-                    }
+						Body2.PositionChanged = true;
+						return;
+					}
 
 
-                    depth = (Body1.Radius + Body2.Radius - dist);
+					depth = (Body1.Radius + Body2.Radius - dist);
 
-                    if (depth <= 0)
-                    {
-                        return;
-                    }
-                    DistX = (DistX * depth / dist) / 2L;
-                    DistY = (DistY * depth / dist) / 2L;
+					if (depth <= 0)
+					{
+						return;
+					}
+					DistX = (DistX * depth / dist);
+					DistY = (DistY * depth / dist);
 
-                    //Switch, used to be const
-                    bool applyVelocity = false;
+					//Resolving collision
 
-                    //Resolving collision
-                    //TODO: Less copy-paste code
-                    if (Body1.Immovable || (Body2.Immovable == false && Body1.Priority > Body2.Priority))
-                    {
-                        DistX *= -1;
-                        DistY *= -1;
 
-                        if (Body1.Immovable || Body2.ImmovableCollisionDirection.EqualsZero())
-                        {
-                            Body2._position.x += DistX;
-                            Body2._position.y += DistY;
-                            Body2.PositionChanged = true;
-                            Body2.ImmovableCollisionDirection = new Vector2d(DistX, DistY);
-                            if (applyVelocity)
-                            {
-                                Body2._velocity.x += DistX;
-                                Body2._velocity.y += DistY;
-                                Body2.VelocityChanged = true;
-                            }
-                        }
-                        else
-                        {
-                            //Only move if there isn't an immovable object in that direction
-                            if (Body2.ImmovableCollisionDirection.x.Sign() != DistX.Sign())
-                            {
-                                Body1._position.x += DistX;
-                            }
-                            if (Body2.ImmovableCollisionDirection.y.Sign() != DistY.Sign())
-                            {
-                                Body1._position.y += DistY;
-                            }
-                        }
-                    }
-
-                    else if (Body2.Immovable || Body2.Priority > Body1.Priority)
-                    {
-                        if (Body2.Immovable || Body1.ImmovableCollisionDirection.EqualsZero())
-                        {
-                            Body2.ImmovableCollisionDirection = new Vector2d(DistX, DistY);
-
-                            Body1._position.x += DistX;
-                            Body1._position.y += DistY;
-                            Body1.PositionChanged = true;
-                            if (applyVelocity)
-                            {
-                                Body1._velocity.x += DistX;
-                                Body1._velocity.y += DistY;
-                                Body1.VelocityChanged = true;
-                            }
-                        }
-                        else
-                        {
-                            //Only move if there isn't an immovable object in that direction
-                            if (Body1.ImmovableCollisionDirection.x.Sign() != DistX.Sign())
-                            {
-                                Body2._position.x += DistX;
-                            }
-                            if (Body1.ImmovableCollisionDirection.y.Sign() != DistY.Sign())
-                            {
-                                Body2._position.y += DistY;
-                            }
-                        }
-                    }
-            
+					if (Body1.Immovable || (Body2.Immovable == false && Body1.Priority > Body2.Priority))
+					{
+						DistX *= -1;
+						DistY *= -1;
+						DistributeCircle_CirclePriority(Body1, Body2);
+					}
+					else if (Body2.Immovable || Body2.Priority > Body1.Priority)
+					{
+						DistributeCircle_CirclePriority(Body2, Body1);
+					}
 					else
 					{
 						DistX /= 2;
 						DistY /= 2;
-
-						Body1._position.x += DistX;
-						Body1._position.y += DistY;
-						Body2._position.x -= DistX;
-						Body2._position.y -= DistY;
-                        
-						Body1.PositionChanged = true;
-						Body2.PositionChanged = true;
-						if (applyVelocity)
-						{
-
-							DistX /= 8;
-							DistY /= 8;
-							Body1._velocity.x += DistX;
-							Body1._velocity.y += DistY;
-							Body1.VelocityChanged = true;
-                            
-							Body2._velocity.x -= DistX;
-							Body2._velocity.y -= DistY;
-							Body2.VelocityChanged = true;
-						}
+						DistributeCircle(Body1);
+						DistX *= -1;
+						DistY *= -1;
+						DistributeCircle(Body2);
 					}
 					break;
 				case CollisionType.Circle_AABox:
@@ -283,7 +244,7 @@ namespace Lockstep
 						DistributeCircle_Box(Body2, Body1);
 					}
 					break;
-                            
+
 				case CollisionType.Circle_Polygon:
 					if (Body1.Shape == ColliderType.Circle)
 					{
@@ -295,8 +256,45 @@ namespace Lockstep
 					}
 					break;
 			}
+		}
+
+		void DistributeCircle_CirclePriority(LSBody higherPriority, LSBody lowerPriority)
+		{
 
 
+			if (true || higherPriority.Immovable || lowerPriority.ImmovableCollisionDirection.EqualsZero())
+			{
+				DistributeCircle(lowerPriority);
+				lowerPriority.ImmovableCollisionDirection = new Vector2d(DistX, DistY);
+
+			}
+			else
+			{
+				//TODO: Fix this behavior. It's supposed to prevent pass-through between i.e. buildings.
+				//Only move if there isn't an immovable object in that direction
+				if (lowerPriority.ImmovableCollisionDirection.x.Sign() != DistX.Sign())
+				{
+					lowerPriority._position.x += DistX;
+				}
+				if (lowerPriority.ImmovableCollisionDirection.y.Sign() != DistY.Sign())
+				{
+					lowerPriority._position.y += DistY;
+				}
+			}
+		}
+
+		void DistributeCircle(LSBody body)
+		{
+			body._position.x += DistX + PhysicsManager.PositionCycler;
+			body._position.y += DistY;
+			body.PositionChanged = true;
+
+			if (true)
+			{
+				body._velocity.x += DistX / 8;
+				body._velocity.y += DistY / 8;
+				body.VelocityChanged = true;
+			}
 		}
 
 		void DistributeCircle_Poly(LSBody circle, LSBody poly)
@@ -305,11 +303,12 @@ namespace Lockstep
 			long horProjection = circle._position.Dot(edgeAxis.x, edgeAxis.y);
 			long verProjection = ClosestAxisProjection + ClosestDist;
 			Vector2d newPos = ClosestAxis * verProjection + edgeAxis * horProjection;
-			circle._position = newPos; 
+			circle._position = newPos;
 			circle.PositionChanged = true;
 		}
 
 		public int _ranIndex;
+
 		public void CheckAndDistributeCollision()
 		{
 
@@ -318,29 +317,85 @@ namespace Lockstep
 				return;
 			}
 			if (_ranIndex < 0)
-			{ 
-				_ranIndex = PhysicsManager.RanCollisionPairs.Add(new PhysicsManager.InstanceCollisionPair(_Version,this));
+			{
+				_ranIndex = PhysicsManager.RanCollisionPairs.Add(new PhysicsManager.InstanceCollisionPair(_Version, this));
 			}
+			IsCollidingChanged = false;
 			LastFrame = LockstepManager.FrameCount;
 			CurrentCollisionPair = this;
-    
-			IsCollidingChanged = false;
-			if (CheckHeight())
+			if (CullCounter <= 0)
 			{
-				bool result = CheckCollision();
-				if (result != IsColliding)
+				GenerateCircleValues();
+				if (CheckHeight())
 				{
-					IsColliding = result;
-					IsCollidingChanged = true;
-				}
-				if (CheckCollision())
-				{
-					DistributeCollision();
-				} 
-			}
-			Body1.NotifyContact(Body2, IsColliding, IsCollidingChanged);
+					bool result = CheckCollision();
 
-			Body2.NotifyContact(Body1, IsColliding, IsCollidingChanged);
+					if (result != IsColliding)
+					{
+						IsColliding = result;
+						IsCollidingChanged = true;
+					}
+					if (CheckCollision())
+					{
+						DistributeCollision();
+					}
+				}
+				Body1.NotifyContact(Body2, IsColliding, IsCollidingChanged);
+				Body2.NotifyContact(Body1, IsColliding, IsCollidingChanged);
+				if (IsColliding == false)
+				{
+					//A negative cull counter means a Body is preventing culling
+					if (CullCounter >= 0)
+					{
+
+						if (PreventDistanceCull)
+						{
+							CullCounter = (short)(
+								(LockstepManager.FrameCount - LastCollidedFrame) / PhysicsManager.CullTimeStep);
+							if (CullCounter > PhysicsManager.CullTimeMax)
+								CullCounter = PhysicsManager.CullTimeMax;
+						}
+						else
+						{
+							//Set number of frames until next collision check based on distance
+							var distCull = (
+										((FastDistance - FastDistanceOffset) >> FixedMath.SHIFT_AMOUNT)
+												  / PhysicsManager.CullDistanceStep + PhysicsManager.CullDistributor
+											  );
+							if (distCull > PhysicsManager.CullDistanceMax)
+								distCull = PhysicsManager.CullDistanceMax;
+							if (distCull < 0)
+								distCull = 0;
+
+							var timeCull = (LockstepManager.FrameCount - LastCollidedFrame) / PhysicsManager.CullTimeStep;
+							if (timeCull > PhysicsManager.CullTimeMax)
+								timeCull = PhysicsManager.CullTimeMax;
+
+							CullCounter = (short)(timeCull + distCull);
+						}
+
+					}
+				}
+				else
+				{
+					LastCollidedFrame = LockstepManager.FrameCount;
+				}
+			}
+			else
+			{
+				if (Body1.PartitionChanged || Body2.PartitionChanged)
+				{
+					//New partition so collision culling may not be calculated yet
+					CullCounter = 0;
+					CheckAndDistributeCollision();
+				}
+				else
+				{
+					//Culled and counter 1 step closer until checking again
+					CullCounter--;
+				}
+			}
+
 		}
 
 		public bool CheckHeight()
@@ -359,12 +414,12 @@ namespace Lockstep
 				case CollisionType.None:
 					break;
 
-			//Check
+				//Check
 				case CollisionType.Circle_Circle:
 					return CheckCircle();
-			//break;
-            
-			//Check
+				//break;
+
+				//Check
 				case CollisionType.Circle_AABox:
 					if (CheckBox())
 					{
@@ -384,11 +439,11 @@ namespace Lockstep
 								return true;
 							}
 						}
- 
+
 					}
 
 					break;
-            
+
 				case CollisionType.Circle_Polygon:
 					if (CheckCircle())
 					{
@@ -409,88 +464,88 @@ namespace Lockstep
 					}
 					break;
 
-			//Check
+				//Check
 				case CollisionType.AABox_AABox:
-                //Not supported
+					//Not supported
 					return false;
-			/*
-                    if (DoPhysics)
-                    {
-                        if (CheckCircle())
-                        {
-                            if (CheckBox())
-                            {
-                                return true;
-                            }
-                        }
-                    } else
-                    {
-                        if (CheckBox())
-                        {
-                            return true;
-                        }
-                    }
-                    break;
-                    */
+				/*
+						if (DoPhysics)
+						{
+							if (CheckCircle())
+							{
+								if (CheckBox())
+								{
+									return true;
+								}
+							}
+						} else
+						{
+							if (CheckBox())
+							{
+								return true;
+							}
+						}
+						break;
+						*/
 
 				case CollisionType.AABox_Polygon:
-                //Not supported
+					//Not supported
 					return false;
-			/*
-                    if (CheckCircle())
-                    {
-                        if (Body1.Shape == ColliderType.AABox)
-                        {
-                            if (CheckBox_Poly(Body1, Body2))
-                            {
-                                return true;
-                            }
-                        } else
-                        {
-                            if (CheckBox_Poly(Body2, Body1))
-                            {
+				/*
+						if (CheckCircle())
+						{
+							if (Body1.Shape == ColliderType.AABox)
+							{
+								if (CheckBox_Poly(Body1, Body2))
+								{
+									return true;
+								}
+							} else
+							{
+								if (CheckBox_Poly(Body2, Body1))
+								{
 
-                                return true;
-                            }
-                        }
-                    }
-                    break;
-                    */
+									return true;
+								}
+							}
+						}
+						break;
+						*/
 
 				case CollisionType.Polygon_Polygon:
-                //Not supported
+					//Not supported
 					return false;
-			/*
-                    if (CheckCircle())
-                    {
-                        if (CheckPoly_Poly(Body1, Body2))
-                        {
-                            return true;
-                        }
-                    }
-                    break;
-                    */
+					/*
+							if (CheckCircle())
+							{
+								if (CheckPoly_Poly(Body1, Body2))
+								{
+									return true;
+								}
+							}
+							break;
+							*/
 			}
 
 			return false;
 		}
 
-		public bool CheckCircle()
+		private void GenerateCircleValues()
 		{
-
 			DistX = Body1._position.x - Body2._position.x;
 			DistY = Body1._position.y - Body2._position.y;
-			if ((DistX * DistX + DistY * DistY) <= CacheSqrDistance)
+			FastDistance = DistX * DistX + DistY * DistY;
+		}
+		private bool CheckCircle()
+		{
+			if (FastDistance <= FastCollideDistance)
 			{
 				return true;
 			}
-
-
-
 			return false;
 		}
 
-		public bool CheckBox()
+		private bool CheckBox()
 		{
 			if (Body1.XMin <= Body2.XMax)
 			{
@@ -509,7 +564,7 @@ namespace Lockstep
 			return false;
 		}
 
-		public static bool CheckBox_Poly(LSBody box, LSBody poly)
+		private static bool CheckBox_Poly(LSBody box, LSBody poly)
 		{
 			bool Right = poly._position.x > box._position.x;
 			bool Top = poly._position.y > box._position.y;
@@ -565,7 +620,7 @@ namespace Lockstep
 		private static long ClosestAxisProjection;
 
 
-		public static bool CheckCircle_Poly(LSBody circle, LSBody poly)
+		private static bool CheckCircle_Poly(LSBody circle, LSBody poly)
 		{
 			int EdgeCount = poly.EdgeNorms.Length;
 			ClosestDist = long.MaxValue;
@@ -617,7 +672,7 @@ namespace Lockstep
 		static bool Collided;
 		static long xAbs, yAbs;
 
-		public void DistributeCircle_Box(LSBody box, LSBody circle)
+		private void DistributeCircle_Box(LSBody box, LSBody circle)
 		{
 			xMore = circle._position.x > box._position.x;
 			yMore = circle._position.y > box._position.y;
@@ -678,7 +733,7 @@ namespace Lockstep
 				circle._position.x -= PenetrationX;
 				circle._position.y -= PenetrationY;
 			}
-            
+
 
 
 
@@ -748,7 +803,7 @@ namespace Lockstep
 					{
 						Collided = true;
 					}
-				}   
+				}
 			}
 
 			return Collided;

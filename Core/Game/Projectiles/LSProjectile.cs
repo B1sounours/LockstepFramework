@@ -26,8 +26,6 @@ namespace Lockstep
 
 		private const int defaultMaxDuration = LockstepManager.FrameRate * 16;
 
-		private static Vector2d difference;
-
 		//
 		// Fields
 		//
@@ -97,13 +95,12 @@ namespace Lockstep
 		[SerializeField]
 		private TargetingType _targetingBehavior;
 
-		public TargetingType TargetingBehavior { get { return _targetingBehavior; } }
+		public TargetingType TargetingBehavior { get; set; }
 
 
 		[SerializeField]
 		private HitType _hitBehavior;
-
-		public HitType HitBehavior { get { return _hitBehavior; } }
+		public HitType HitBehavior { get; set; }
 
 		[FixedNumberAngle, SerializeField]
 		private long _angle = FixedMath.TenDegrees;
@@ -123,7 +120,7 @@ namespace Lockstep
 		//
 
 		public uint SpawnVersion { get; private set; }
-
+		public bool TargetCurrent { get; private set; }
 		//PAPPS ADDED THIS:	it detaches the children particle effects inside the projectile, and siwtches em off.. REALLY NECESSARY
 		public bool DoReleaseChildren = false;
 
@@ -279,7 +276,7 @@ namespace Lockstep
 			}
 		}
 
-	private void ApplyCone(Vector3d center3d, Vector2d forward, long radius, long angle)
+		private void ApplyCone(Vector3d center3d, Vector2d forward, long radius, long angle)
 		{
 			Vector2d center = center3d.ToVector2d();
 			long fastRange = radius * radius;
@@ -324,15 +321,16 @@ namespace Lockstep
 
 
 		static FastList<LSAgent> ScanOutput = new FastList<LSAgent>();
+
 		private void Scan(Vector2d center, long radius)
 		{
 			InfluenceManager.ScanAll(
-			center,
-			radius,
-			this.AgentConditional,
-			this.BucketConditional,
+				center,
+				radius,
+				this.AgentConditional,
+				this.BucketConditional,
 				ScanOutput
-		);
+			);
 
 		}
 
@@ -343,7 +341,7 @@ namespace Lockstep
 		internal void Deactivate()
 		{
 			SpawnVersion = 0;
-			this.TargetVersion = 0u;
+			this.TargetVersion = 0;
 			this.IsActive = false;
 			if (cachedGameObject.IsNotNull())
 				this.cachedGameObject.SetActive(false);
@@ -369,37 +367,38 @@ namespace Lockstep
 
 		private void Hit(bool destroy = true)
 		{
-			if (this.TargetingBehavior == TargetingType.Homing && this.HitBehavior == HitType.Single && this.Target.SpawnVersion != this.TargetVersion)
-			{
-				ProjectileManager.EndProjectile(this);
-				return;
-			}
 			this.OnHit();
 			if (this.onHit.IsNotNull())
 			{
 				this.onHit();
 			}
-			if (this.UseEffects)
+			if (this.TargetCurrent)
 			{
-				if (this.AttachEndEffectToTarget)
+				if (this.UseEffects)
 				{
-					/*
-                    LSEffect lSEffect = EffectManager.CreateEffect(this.HitFX);
-                    lSEffect.CachedTransform.parent = this.Target.VisualCenter;
-                    lSEffect.CachedTransform.localPosition = Vector3.up;
-                    lSEffect.CachedTransform.rotation = this.cachedTransform.rotation;
-                    lSEffect.Initialize();
-                    */
-				}
-				else
-				{
-
+					if (this.AttachEndEffectToTarget)
 					{
-						EffectManager.LazyCreateEffect(this.HitFX, this.cachedTransform.position, this.cachedTransform.rotation);
+						LSEffect lSEffect = EffectManager.CreateEffect(this.HitFX);
+						lSEffect.CachedTransform.parent = this.Target.VisualCenter;
+						lSEffect.CachedTransform.localPosition = Vector3.up;
+						lSEffect.CachedTransform.rotation = this.cachedTransform.rotation;
+						lSEffect.Initialize();
+					}
+					else
+					{
+						//Certain targeting types collide with a target
+						if (this.TargetingBehavior == TargetingType.Homing)
+						{
+							EffectManager.CreateCollisionEffect(this.HitFX, this, Target.Body);
+						}
+						else
+						{
+							EffectManager.CreateEffect(this.HitFX, this.cachedTransform.position, this.cachedTransform.rotation);
+
+						}
 					}
 				}
 			}
-
 			if (destroy)
 				ProjectileManager.EndProjectile(this);
 		}
@@ -410,17 +409,18 @@ namespace Lockstep
 
 		public bool Deterministic { get; private set; }
 
-		internal void Prepare(int id, Vector3d projectilePosition, Func<LSAgent, bool> agentConditional, Func<byte, bool> bucketConditional, Action<LSAgent> hitEffect, bool deterministic)
+		internal void Prepare(int id, Vector3d projectilePosition, Func<LSAgent, bool> agentConditional,
+            Func<byte, bool> bucketConditional, Action<LSAgent> onHit, bool deterministic)
 		{
 			this.Deterministic = deterministic;
 
 			this.IsActive = true;
-			this.cachedGameObject.SetActiveIfNot(true);
+			this.cachedGameObject.SetActive(true);
 
 			this.ResetVariables();
 
 			this.Position = projectilePosition;
-			this.HitEffect = hitEffect;
+			this.HitEffect = onHit;
 			this.ID = id;
 
 			this.AliveTime = 0;
@@ -445,19 +445,25 @@ namespace Lockstep
 
 			this.cachedTransform.rotation = Quaternion.LookRotation(target.CachedTransform.position - this.Position.ToVector3());
 
-
 		}
 
-		public void InitializeTimed(Vector2d forward)
+		public void InitializeTimed(LSAgent target)
 		{
-			Forward = forward;
-			Direction = forward.ToVector3d();
-		}
+            this.Target = target;
+            this.TargetVersion = this.Target.SpawnVersion;
+        }
+        public void InitializeTimed(Vector3d targetPos)
+        {
+            this.TargetPosition = targetPos.ToVector2d();
+            this.Position = targetPos;
+            this.TargetVersion = this.Target.SpawnVersion;
+        }
 
-		Func<LSBody, bool> BodyConditional;
+        Func<LSBody, bool> BodyConditional;
 
 		public void InitializeFree(Vector3d direction, Func<LSBody, bool> bodyConditional, bool useGravity = false)
 		{
+
 			this.BodyConditional = bodyConditional;
 			this.Direction = direction;
 			this.Forward = Direction.ToVector2d();
@@ -474,7 +480,8 @@ namespace Lockstep
 
 		public void UpdateVisuals()
 		{
-			cachedTransform.rotation = Quaternion.LookRotation(Forward.ToVector3());
+			if (!Forward.EqualsZero())
+				cachedTransform.rotation = Quaternion.LookRotation(Forward.ToVector3());
 			cachedTransform.position = this.Position.ToVector3();
 		}
 
@@ -489,8 +496,6 @@ namespace Lockstep
 				this.cachedTransform.position = this.Position.ToVector3();
 				this.speedPerFrame = this.Speed / 32L;
 			}
-
-
 
 			switch (this.TargetingBehavior)
 			{
@@ -521,7 +526,7 @@ namespace Lockstep
 					Forward = TargetPosition - this.Position.ToVector2d();
 					Forward.Normalize();
 					break;
-				case TargetingType.Free:
+				case TargetingType.Directional:
 
 					Vector3d vel = this.Direction;
 					vel.Mul(speedPerFrame);
@@ -543,7 +548,7 @@ namespace Lockstep
 
 			if (UseEffects)
 			{
-				LSEffect effect = EffectManager.LazyCreateEffect(this.StartFX, this.Position.ToVector3(), this.cachedTransform.rotation);
+				LSEffect effect = EffectManager.CreateEffect(this.StartFX, this.Position.ToVector3(), this.cachedTransform.rotation);
 				if (effect != null)
 				{
 					effect.StartPos = this.Position.ToVector3();
@@ -556,7 +561,7 @@ namespace Lockstep
 
 		private void OnHit()
 		{
-			if (this.TargetingBehavior == TargetingType.Free)
+			if (this.TargetingBehavior == TargetingType.Directional)
 			{
 				switch (this.HitBehavior)
 				{
@@ -569,11 +574,11 @@ namespace Lockstep
 			{
 				switch (this.HitBehavior)
 				{
+					case HitType.None:
+						break;
 					case HitType.Single:
 						if (Target == null)
 						{
-							//throw new System.Exception("Cannot use single hit effect without target");
-
 							break;
 						}
 						this.HitAgent(Target);
@@ -589,11 +594,22 @@ namespace Lockstep
 			}
 		}
 
+		private void ResetVariables()
+		{
+			this.ResetEffects();
+			this.ResetTrajectory();
+			this.ResetHit();
+			this.ResetTargeting();
+			this.ResetHelpers();
+		}
 		private void ResetHit()
 		{
 			this.ExclusiveTargetType = this._exclusiveTargetType;
 			this.onHit = null;
 			this.onHitAgent = null;
+			this.Target = null;
+			this.HitBehavior = _hitBehavior;
+			TargetCurrent = true;
 		}
 
 		private void ResetEffects()
@@ -613,21 +629,13 @@ namespace Lockstep
 			this.Speed = this._speed;
 			this.LastingDuration = this._lastingDuration;
 			this.TickRate = this._tickRate;
-
+			this.TargetingBehavior = _targetingBehavior;
 		}
 
 		private void ResetTrajectory()
 		{
 		}
 
-		private void ResetVariables()
-		{
-			this.ResetEffects();
-			this.ResetTrajectory();
-			this.ResetHit();
-			this.ResetTargeting();
-			this.ResetHelpers();
-		}
 
 		public IProjectileData MyData { get; private set; }
 
@@ -656,12 +664,17 @@ namespace Lockstep
 				ProjectileManager.EndProjectile(this);
 				return;
 			}
-			switch (this.TargetingBehavior)
+
+            switch (this.TargetingBehavior)
 			{
 				case TargetingType.Timed:
 					this.CountDown--;
-
-					if (!IsLasting)
+                    if (this.HitBehavior == HitType.Single && this.Target.SpawnVersion != this.TargetVersion)
+                    {
+                        ProjectileManager.EndProjectile(this);
+                        break;
+                    }
+                    if (!IsLasting)
 					{
 						if (this.CountDown <= 0)
 						{
@@ -680,6 +693,14 @@ namespace Lockstep
 					}
 					break;
 				case TargetingType.Homing:
+					if (this.HitBehavior == HitType.Single && this.Target.SpawnVersion != this.TargetVersion)
+					{
+						//Switch to positional to move to target's last position and not seek deceased target
+						this.TargetingBehavior = TargetingType.Positional;
+						Target = null;
+						TargetCurrent = false;
+						goto case TargetingType.Positional;
+					}
 					if (this.CheckCollision())
 					{
 						this.TargetPosition = this.Target.Body._position;
@@ -693,7 +714,7 @@ namespace Lockstep
 						MoveToTargetPosition();
 					}
 					break;
-				case TargetingType.Free:
+				case TargetingType.Directional:
 					RaycastMove(this.Velocity);
 					break;
 				case TargetingType.Positional:
@@ -720,11 +741,9 @@ namespace Lockstep
 			if (LSProjectile.tempDirection.Dot(this.lastDirection.x, this.lastDirection.y) < 0L || tempDirection == Vector2d.zero)
 			{
 				this.Hit();
-				//Debug.Log("asdf");
 			}
 			else
 			{
-				//Debug.Log("asdf2");
 				LSProjectile.tempDirection.Normalize();
 				Forward = tempDirection;
 				this.lastDirection = LSProjectile.tempDirection;
@@ -774,7 +793,7 @@ namespace Lockstep
 			}
 			else
 			{
-				this.cachedGameObject.SetActiveIfNot(false);
+				this.cachedGameObject.SetActive(false);
 			}
 		}
 

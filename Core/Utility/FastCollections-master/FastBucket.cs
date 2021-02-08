@@ -1,10 +1,13 @@
-﻿using UnityEngine;
-using System.Collections;
+﻿using System.Collections;
 using System;
-using System.Collections.Generic;
 
 namespace FastCollections
 {
+
+	/// <summary>
+	/// Bucket for O(1) removal of items.
+	/// Note: Iterating through is not the same unless the bucket is reset!
+	/// </summary>
 	public class FastBucket<T> : FastEnumerable<T>
 	{
 		public T[] innerArray;
@@ -23,10 +26,11 @@ namespace FastCollections
 		{
 			Initialize();
 		}
-        public FastBucket (int capacity) {
-            this.Capacity = capacity;
-            Initialize ();
-        }
+		public FastBucket(int capacity)
+		{
+			this.Capacity = capacity;
+			Initialize();
+		}
 
 		private void Initialize()
 		{
@@ -51,12 +55,13 @@ namespace FastCollections
 			{
 				//this.innerArray[index] = item; //If something's already there, just replace it
 			}
-			else {
+			else
+			{
 				CheckCapacity(index + 1);
 				if (index < PeakCount)
 				{
 					int indexIndex = Array.BinarySearch<int>(OpenSlots.innerArray, index);
-					Shortcuts.Shift(OpenSlots.innerArray,indexIndex, OpenSlots.innerArray.Length, -1);
+					Shortcuts.Shift(OpenSlots.innerArray, indexIndex, OpenSlots.innerArray.Length, -1);
 				}
 				else if (index >= PeakCount)
 				{
@@ -156,7 +161,15 @@ namespace FastCollections
 			}
 			FastClear();
 		}
-
+		/// <summary>
+		/// When there are no items, this resets the bucket to be allocated the same way as when it was created.
+		/// </summary>
+		public void SoftClear()
+		{
+			OpenSlots.FastClear();
+			PeakCount = 0;
+			Count = 0;
+		}
 		public void FastClear()
 		{
 			arrayAllocation.SetAll(false);

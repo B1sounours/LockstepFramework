@@ -1,8 +1,10 @@
 ﻿using UnityEngine;
-using Lockstep;
 
 namespace Lockstep
 {
+	/// <summary>
+	/// Global singleton abilities. Attach to the Manager gameobject or child.
+	/// </summary>
 	public abstract class BehaviourHelper : MonoBehaviour, ILockstepEventsHandler
 	{
 		private ushort CachedListenInput;

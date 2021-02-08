@@ -1,10 +1,12 @@
 ﻿using System;
+
 namespace Lockstep
 {
-    public enum HitType
-    {
-        Single,
-        Area,
-        Cone
-    }
+	public enum HitType
+	{
+		None,
+		Single,
+		Area,
+		Cone
+	}
 }

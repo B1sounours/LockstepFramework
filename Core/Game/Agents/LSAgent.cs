@@ -23,7 +23,6 @@ namespace Lockstep
 	/// </summary>
 	public class LSAgent : MonoBehaviour, IMousable
 	{
-
 		Vector3 IMousable.WorldPosition
 		{
 			get { return this.Body._visualPosition; }
@@ -83,7 +82,7 @@ namespace Lockstep
 
 
 		[SerializeField]
-		private int _selectionPriority;
+		private int _selectionPriority = 0;
 		public int SelectionPriority { get { return _selectionPriority; } }
 
 		[SerializeField]
@@ -91,9 +90,25 @@ namespace Lockstep
 		public bool Selectable { get { return _selectable; } }
 		public bool CanSelect { get { return Selectable && IsVisible; } }
 
-		public ushort TypeIndex { get; set;}
+		ushort _typeIndex;
+		/// <summary>
+		/// The index of this agent in the pool.
+		/// </summary>
+		/// <value>The index of the type.</value>
+		public ushort TypeIndex
+		{
+			get
+			{
+				return _typeIndex;
+			}
+			set
+			{
+				_typeIndex = value;
+				_typeIndex = AgentController.UNREGISTERED_TYPE_INDEX;
+			}
+		}
 
-		public int ReferenceIndex { get; set;}
+		public int ReferenceIndex { get; set; }
 
 		public Vector2 Position2 { get { return new Vector2(CachedTransform.position.x, CachedTransform.position.z); } }
 		public FastList<AbilityDataItem> Interfacers { get { return abilityManager.Interfacers; } }
@@ -104,8 +119,8 @@ namespace Lockstep
 		public Ability[] AttachedAbilities { get { return _attachedAbilities; } }
 		//[SerializeField]
 		private UnityLSBody _unityBody;
-		public UnityLSBody UnityBody {get {return _unityBody;}}
-		public LSBody Body { get; set;}
+		public UnityLSBody UnityBody { get { return _unityBody; } }
+		public LSBody Body { get; set; }
 		//[SerializeField]
 		private LSAnimatorBase _animator;
 		public LSAnimatorBase Animator { get { return _animator; } }
@@ -121,6 +136,7 @@ namespace Lockstep
 		public LSInfluencer Influencer { get; private set; }
 
 		public bool IsActive { get; private set; }
+        public bool IsLive { get; private set; }
 
 		public event Action<LSAgent> onDeactivate;
 
@@ -199,10 +215,11 @@ namespace Lockstep
 			}
 		}
 
+        Renderer _cachedRenderer;
 		public bool IsVisible
 		{
-			//get { return cachedRenderer == null || (cachedRenderer.enabled && cachedRenderer.isVisible); }
-			get { return true; } //TODO: Return true only if viable GladFox: seen for what kind of camera? :)
+			get { return _cachedRenderer == null || (_cachedRenderer.enabled && _cachedRenderer.isVisible); }
+			//get { return true; } //TODO: Return true only if viable GladFox: seen for what kind of camera? :)
 		}
 
 		public AllegianceType GetAllegiance(LSAgent other)
@@ -256,7 +273,8 @@ namespace Lockstep
 		private readonly FastList<int> TrackedLockstepTickets = new FastList<int>();
 		void Awake()
 		{
-			//gameObject.SetActive(false);
+
+			gameObject.SetActive(false);
 
 		}
 		public void Setup(IAgentData interfacer)
@@ -331,7 +349,7 @@ namespace Lockstep
 		public void SessionReset()
 		{
 			this.BoxVersion = 0;
-			this.SpawnVersion = 0;
+			this.SpawnVersion = 1;
 		}
 
 		internal void InitializeController(AgentController controller, ushort localID, ushort globalID)
@@ -342,16 +360,24 @@ namespace Lockstep
 		}
 
 		bool Setuped;
+		//Initialize this agent with basic functions and Ability system
+		public void InitializeBare()
+		{
+			IsActive = true;
+            IsLive = true;
+			abilityManager.Initialize();
+		}
 		public void Initialize(
 			Vector2d position = default(Vector2d),
 			Vector2d rotation = default(Vector2d))
 		{
 
 			IsActive = true;
+            IsLive = true;
 			CheckCasting = true;
 
 
-			CachedGameObject.SetActiveIfNot(true);
+			CachedGameObject.SetActive(true);
 			if (Body.IsNotNull())
 			{
 				Body.Initialize(position.ToVector3d(), rotation);
@@ -445,26 +471,31 @@ namespace Lockstep
 			}
 		}
 
-		internal void Deactivate(bool Immediate = false)
+        /// <summary>
+        /// Do not call this to destroy the agent. Use AgentController.DestroyAgent().
+        /// </summary>
+        /// <param name="Immediate"></param>
+		internal void _Deactivate(bool Immediate = false)
 		{
 			if (IsActive == false)
 				Debug.Log("NOASER");
 			if (onDeactivate != null)
 				this.onDeactivate(this);
-			_Deactivate();
+		    DeactivateCore();
 
 			if (Immediate == false)
 			{
 				if (Animator.IsNotNull())
 					Animator.Play(AnimState.Dying);
-				
+
 				poolCoroutine = CoroutineManager.StartCoroutine(PoolDelayer());
 			}
-			else {
-				Pool();
+			else
+			{
+				AgentController.EndLife(this);
 			}
 		}
-		private void _Deactivate()
+		private void DeactivateCore()
 		{
 			this.StopCast();
 
@@ -485,24 +516,26 @@ namespace Lockstep
 		int deathingIndex;
 		public Coroutine poolCoroutine;
 
+
 		private IEnumerator<int> PoolDelayer()
 		{
 			deathingIndex = AgentController.DeathingAgents.Add(this);
-	
+
 
 			yield return _deathTime;
 			AgentController.DeathingAgents.RemoveAt(deathingIndex);
 
-			Pool();
+			AgentController.EndLife(this);
 		}
 
-		public void Pool()
-		{
-			AgentController.CacheAgent(this);
-			if (CachedGameObject != null)
-				CachedGameObject.SetActive(false);
-		}
-
+        internal void _EndLife()
+        {
+            this.IsLive = false;
+            for (var k = 0; k < this.abilityManager.Abilitys.Length; k++)
+            {
+                this.abilityManager.Abilitys[k].EndLife();
+            }
+        }
 		public void SetState(AnimState animState)
 		{
 			if (Animator.IsNotNull())
@@ -544,6 +577,7 @@ namespace Lockstep
 		{
 			_cachedTransform = base.transform;
 			_cachedGameObject = base.gameObject;
+            _cachedRenderer = GetComponent<Renderer>();
 			_unityBody = GetComponent<UnityLSBody>();
 			_animator = GetComponent<LSAnimatorBase>();
 			_attachedAbilities = GetComponents<Ability>();

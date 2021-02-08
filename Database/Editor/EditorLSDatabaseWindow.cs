@@ -17,8 +17,11 @@ namespace Lockstep.Data {
         
         public EditorLSDatabase DatabaseEditor {
             get {
-                return _databaseEditor;
+				return _databaseEditor;
             }
+			set {
+				_databaseEditor = value;
+			}
         }
         
         private LSDatabase _database;
@@ -35,22 +38,32 @@ namespace Lockstep.Data {
             window.minSize = new Vector2 (400, 100);
             window.Show ();
         }
-        
-        void OnEnable () {
-            Window = this;
+         
+        void LoadInit () {
+			Window = this;
             this.LoadDatabase(LSFSettingsManager.GetSettings().Database);
             if (this.Database != null) {
                 _databaseType = LSFSettingsManager.GetSettings().Database.GetType();
                 if (_databaseType.Type == null) _databaseType = typeof (DefaultLSDatabase);
             }
+			loadInited = true;
         }
+
+		void OnEnable () {
+
+			LoadInit ();
+		}
         
         Vector2 scrollPos;
         //Rect windowRect = new Rect (0, 0, 500, 500);
-        
+		bool loadInited = false;
         void OnGUI () {
+
+			if (!loadInited) {
+				LoadInit ();
+			}
             if (Application.isPlaying) {
-                EditorGUILayout.LabelField ("Do not modify database during runtime", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField ("Values modified may not be pulled by previously existing units.", EditorStyles.boldLabel);
                 //return;
             }
             DrawSettings ();
@@ -140,22 +153,31 @@ namespace Lockstep.Data {
         
         bool LoadDatabaseFromPath (string absolutePath) {
             string relativePath = absolutePath.GetRelativeUnityAssetPath ();
-            LSDatabase database = AssetDatabase.LoadAssetAtPath<LSDatabase> (relativePath);
+			LSDatabase database = AssetDatabase.LoadAssetAtPath<LSDatabase>(relativePath);
             if (database != null) {
                 LoadDatabase (database);
                 return true;
             }
-            _databaseEditor = null;
+            DatabaseEditor = null;
+
             return false;
         }
         
         void LoadDatabase (LSDatabase database) {
             _database = database;
-            _databaseEditor = new EditorLSDatabase();
-            bool isValid;
-            _databaseEditor.Initialize (this,Database, out isValid);
+			bool isValid = false;
+			if (_database != null) {
+				if (database.GetType () != DatabaseType) {
+					//Note: A hacky fix for changing the type of a previously saved database is to turn on Debug mode
+					//and change the script type of the database asset in the inspector. Back it up before attempting!
+
+				}
+				DatabaseEditor = new EditorLSDatabase ();
+				DatabaseEditor.Initialize (this, Database, out isValid);
+			}
             if (!isValid) {
-                this._databaseEditor = null;
+				Debug.Log ("Load unsuccesful");
+                this.DatabaseEditor = null;
                 this._database = null;
                 IsLoaded = false;
                 return;
@@ -164,12 +186,11 @@ namespace Lockstep.Data {
             LSFSettingsModifier.Save ();
             IsLoaded = true;
         }
-        
         bool CreateDatabase (string absolutePath) {
+
             LSDatabase database = (LSDatabase)ScriptableObject.CreateInstance (DatabaseType);
             if (database == null) return false;
 
-            LoadDatabase (database);
             
             string relativePath = absolutePath.GetRelativeUnityAssetPath ();
 
@@ -177,11 +198,14 @@ namespace Lockstep.Data {
             
             AssetDatabase.SaveAssets ();
             AssetDatabase.Refresh ();
-            
+			LoadDatabase (database);
+
             return true;
         }
         
         void Save () {
+			if (Application.isPlaying)
+				return;
             DatabaseEditor.Save ();
             EditorUtility.SetDirty (DatabaseEditor.Database);
             AssetDatabase.SaveAssets ();

@@ -1,21 +1,22 @@
 Lockstep Framework
 ------------------------
-The Lockstep Framework (LSF) is a framework designed for games that especially need lockstep simulations. It includes a deterministic 2D physics engine, pathfinding, behavior system, and more. LSF is integrated with Unity.
+The Lockstep Framework (LSF) is a framework designed for games that need lockstep simulations. It includes a deterministic 2D physics engine, pathfinding, behavior system, and more. LSF is integrated with Unity.
 
 Special thanks to Liv Games (http://www.livgames.com), 360 Studio (http://www.360studio.me), and Thoopid (http://www.thoopid.com/) for supporting the development of Lockstep Framework. Also, thank you GladFox (https://github.com/GladFox) and the community for helping with development.
 
 Created by John Pan (https://github.com/SnpM).
 
+NOTE: LSF is no longer being actively developed. The [latest commit](https://github.com/SnpM/LockstepFramework/commit/d7819df4005316d8c0e3148728794f7c2b921a7a) targets Unity 2019.1f1.
+
 Features
-__________
+------------------------
 - Deterministic math library and simulation
-- Custom 2D physics engine on the X-Z plane.
+- Custom 2D physics engine on the X-Z plane
 - Behaviour system for both individual agents and globally
 - Lockstep variables - know when and where desyncs happen
-- Size-based pathfinding (big units won't get stuck in those narrow gaps)
+- Size-based pathfinding (big units won't get stuck in narrow gaps)
 - Customizable database system
-- Support for DakrRift and Photon Networking (Forge Networking support deprecated but let me know if you need it)
-- 3D Raycasting
+- Support for DarkRift and Photon Networking (Forge Networking support deprecated but let me know if you need it)
 
 Quick Setup
 -----------
@@ -26,10 +27,12 @@ Quick Setup
 
 Note: The example only shows the basic functionality of the framework. Comprehensive examples will be added close to the end of core development.
 
-Road Map
+**Tutorials and more**
 ---------
-- DOCUMENTATION - Tutorials for the major features of LS and descriptions of important methods and variables
-- Deterministic fog of war
+To find out more about Lockstep Framework, please explore the wiki (https://github.com/SnpM/LockstepFramework/wiki) and feel free to ask us questions.
+
+Check out tutorial series here: https://github.com/SnpM/LockstepFramework/wiki/Tutorial-Series
+
 
 License
 --------
@@ -54,20 +57,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-//Ability info will go in docs later
-/*
-Ability Pattern
-----------------
-Abilities are moddable behaviors that can be easily attached, detached, and moddified on prefab game objects. They follow the following pattern:
-- The overridable Initialize() method is called when the agent the ability belongs to is created and initialized. It provides an argument that is the agent the ability belongs to. Because LSF uses object pooling, the Ability must also be reset in Initialize(). Note: Lockstep varaibles are implemented but not tested. These will make resetting in Initialize obsolete.
-- Simulate() is called every single simulation frame (FixedUpdate frames).
-- Visualize is called every render frame (Update frames).
-- Deactivate() is called when the ability's agent is deactivated (i.e. killed). Note that Simulate() will not be called until after Initialize() is called again.
-
-ActiveAbility Pattern
-_____________________________
-ActiveAbility inherits from Ability and includes all the patterns described above. In addition ActiveAbilitys can be interacted with by players through Commands.
-- Execute () is called when a Command is received and activates the ability. This method provides an argument that is the Command responsible for the ability's activation.
- */
-

@@ -1,45 +1,47 @@
 ﻿using UnityEngine;
-using System.Collections.Generic;
-using System.Linq;
 using System;
 
 namespace Lockstep
 {
-	public class LSAnimatorBase : MonoBehaviour
+	public abstract class LSAnimatorBase : MonoBehaviour
 	{
-		public event Action<AnimState> OnStatePlay;
-		public event Action<AnimImpulse, int> OnImpulsePlay;
+
+        public event Action<AnimState> onStatePlay;
+		public event Action<AnimImpulse> onImpulsePlay;
 
 		public bool CanAnimate { get; protected set; }
 
 		private AnimImpulse currentImpulse;
 
-		public virtual void Setup()
+		public void Setup()
 		{
+            OnSetup();
 		}
+        protected virtual void OnSetup() { }
 
-		public virtual void Initialize()
+		public void Initialize()
 		{
 			animStateChanged = false;
 			lastAnimState = currentAnimState = AnimState.Idling;
+            OnInitialize();
 		}
+        protected virtual void OnInitialize (){ }
 
-		public virtual void ApplyImpulse(AnimImpulse animImpulse, int rate = 0)
+		public void ApplyImpulse(AnimImpulse animImpulse, double speed = 1d)
 		{
-			Play (animImpulse, rate);
+            if (onImpulsePlay.IsNotNull())
+			    onImpulsePlay(animImpulse);
+            OnApplyImpulse(animImpulse, speed);
 		}
-			
-		public virtual void Play(AnimState state)
-		{
-			if (OnStatePlay.IsNotNull())
-				OnStatePlay(state);
-		}
+        protected abstract void OnApplyImpulse(AnimImpulse animImpulse, double speed);
 
-		public virtual void Play(AnimImpulse impulse, int rate = 0)
+        public void Play(AnimState state, double speed = 1d)
 		{
-			if (OnImpulsePlay.IsNotNull())
-				OnImpulsePlay(impulse, rate);
+			if (onStatePlay.IsNotNull())
+				onStatePlay(state);
+            OnPlay(state, speed);
 		}
+        protected abstract void OnPlay(AnimState impulse, double speed);
 
 		[SerializeField]
 		private AnimState currentAnimState;
@@ -52,7 +54,8 @@ namespace Lockstep
 				if (value != lastAnimState)
 				{
 					animStateChanged = true;
-				} else
+				}
+				else
 				{
 
 				}
@@ -60,7 +63,7 @@ namespace Lockstep
 			}
 		}
 
-        private bool isImpulsing = false;
+		private bool isImpulsing = false;
 		private bool animStateChanged;
 		private AnimState lastAnimState;
 
@@ -87,13 +90,13 @@ namespace Lockstep
 		Moving,
 		Dying,
 		Engaging,
-        SpecialEngaging
+		SpecialEngaging
 	}
 
 	public enum AnimImpulse
 	{
 		Fire,
-        SpecialFire,
+		SpecialFire,
 		SpecialAttack,
 		Extra
 	}

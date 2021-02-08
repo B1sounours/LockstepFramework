@@ -1,11 +1,8 @@
-﻿using UnityEngine;
-using System.Collections; using FastCollections;
-using Lockstep;
-namespace Lockstep
+﻿namespace Lockstep
 {
 	public class SpecialHitEffect : DurationAbility
 	{
-		protected Scan cachedScan { get; private set;}
+		protected Scan cachedScan { get; private set; }
 
 		protected override void OnSetup()
 		{
@@ -20,11 +17,11 @@ namespace Lockstep
 		{
 			cachedScan.ExtraOnHit += ApplyEffect;
 		}
-		protected virtual void ApplyEffect(LSAgent agent)
+		protected virtual void ApplyEffect(LSAgent agent, bool isCurrent)
 		{
-			OnApplyEffect(agent);
+			OnApplyEffect(agent, isCurrent);
 		}
-		protected virtual void OnApplyEffect (LSAgent agent)
+		protected virtual void OnApplyEffect(LSAgent agent, bool isCurrent)
 		{
 		}
 

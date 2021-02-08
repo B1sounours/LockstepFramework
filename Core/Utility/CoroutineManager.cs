@@ -1,17 +1,12 @@
 ﻿using UnityEngine;
-using System;
-using System.Collections; using FastCollections;
+using FastCollections;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 
 namespace Lockstep
 {
 	public static class CoroutineManager
 	{
-
 		static FastBucket<Coroutine> Coroutines = new FastBucket<Coroutine>();
-
-
 
 		public static void Initialize()
 		{
@@ -33,6 +28,11 @@ namespace Lockstep
 			}
 		}
 
+		/// <summary>
+		/// Starts coroutine that returns number of frames to wait.
+		/// </summary>
+		/// <returns>The coroutine.</returns>
+		/// <param name="enumerator">Enumerator.</param>
 		public static Coroutine StartCoroutine(IEnumerator<int> enumerator)
 		{
 			Coroutine coroutine = new Coroutine();
@@ -82,7 +82,8 @@ namespace Lockstep
 			{
 				WaitFrames = (int)Enumerator.Current;
 			}
-			else {
+			else
+			{
 				CoroutineManager.StopCoroutine(this);
 			}
 		}
